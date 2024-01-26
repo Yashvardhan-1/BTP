@@ -4,3 +4,5 @@
 /milo-base/dataframe.pkl
 /milo-base/class-data*
 /data
+/milo-base/cifar10
+/milo-base/cifar100

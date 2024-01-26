@@ -9,15 +9,13 @@ import torchvision
 from torchvision import transforms
 from datasets import load_dataset
 import time
+import pickle
 import random
 # from submodlib import FacilityLocationFunction
 import math
 import os
+import argparse
 
-# Load the CIFAR-10 dataset
-cifar10 = load_dataset("cifar10")
-# cifar10 = torchvision.datasets.CIFAR10(root='./data', train=True, download=True)
-# testset = torchvision.datasets.CIFAR10(root='./data', train=False, download=True)
 
 # Define the image transformation
 transform = transforms.Compose([
@@ -168,71 +166,24 @@ def main():
 if __name__ == '__main__':
     # df = main()
     # Load the ResNet18 model
+    parser = argparse.ArgumentParser(description='Process some integers.')
+    parser.add_argument("--dataset", help="what dataset to generate features", default="cifar10")
+
+    args = parser.parse_args()
+
+    print(args.dataset)
+    exit()
+    dataset = "cifar10"
+    dataset = load_dataset(dataset)
+
     resnet = torch.hub.load('pytorch/vision:v0.11.3', 'resnet18', pretrained=True)
 
     df = extract_features_resnet_threaded_cifar(cifar10["train"])
     # sort the dataframe by index
     df = df.sort_values(by='Index')
+    
     # Convert the 'features' column to a NumPy array
     df['Features'] = np.array(df['Features'])
-    # Save the features DataFrame to a CSV file
-    filename = "features_cifar_check.csv"
-    df.to_csv(filename, index=False)
     
-    np_array = np.array(df['Features'])
-    flattened_array = np_array.tolist()
-    # Create a DataFrame from the flattened array
-    df = pd.DataFrame(flattened_array)
-    # Save the DataFrame to a CSV file
-    df.to_csv('np.csv', index=False, header=False)
-
-    # MILO SGE
-    # k=1000
-    # '''
-    #     I tried running objFL on the jupyter notebook. There the time to create the objFL is very large (kernel crashes)
-    #     I have written the code for stochastic greedy following the MILO paper. 
-    #     There A was not defined so I took it as S_i only. 
-    #     stochastic_greedy() should give distinct subsets 
-    # '''
-    # objFL = FacilityLocationFunction(n=np_array.shape[0], data=np_array, separate_rep=False, mode="dense", metric="euclidean")
-    # # S = stochastic_greedy(len(df), k, objFL=objFL)
-
-    # output_directory = 'csv_files_yash/'
-    # os.makedirs(output_directory, exist_ok=True)
-    # for i, s in enumerate(S):
-    #     s_list = list(s)
-    #     df = pd.DataFrame({f'Set_{i}': s_list})
-    #     filename = os.path.join(output_directory, f'set_{i}.csv')
-    #     df.to_csv(filename, index=False, header=False)
-
-    #     print(f'Set {i} saved to {filename}')
-
-# def stochastic_greedy(D, k, objFL, ϵ=1e-2, n=10):
-#     """Samples n subsets using stochastic-greedy.
-
-#     Args:
-#     D: number of training example
-#     k: The subset size.
-#     objFL: submodular function for conditional gain calculation
-#     ϵ: The error tolerance.
-#     n: The number of subsets to sample.
-
-#     Returns:
-#     A list of n subsets.
-#     """
-    
-#     # Initialize empty subsets
-#     S = [set() for _ in range(n)]
-#     # Set random subset size for the stochastic-greedy algorithm
-#     s = int(D * math.log(1 / ϵ) / k)
-#     for i in range(n):
-#         for j in range(k):
-#             # Sample a random subset by sampling s elements from D \ Si
-#             R = random.choices(list(set(range(D)) - S[i]), k=s)
-#             # Use map to calculate marginal gains for all values in R with the custom set
-#             marginal_gains = list(map(lambda r: objFL.marginalGain(S[i], r), R))
-#             max_index = np.argmax(marginal_gains)
-#             max_r = S[max_index]
-#             S[i].add(max_r)
-
-#     return S
+    with open(f"{dataset}/dataframe.pkl", "wb") as f:
+        pickle.dump(df, f)
