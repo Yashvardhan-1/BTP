@@ -8,6 +8,12 @@ import pickle
 import time
 import os
 import timeit
+import argparse
+
+parser = argparse.ArgumentParser(description="Program to generate the data or measure the time to generate the data")
+parser.add_argument("--time", action="store_true", help="Description of the boolean argument")
+args = parser.parse_args()
+
 
 def SGE_optimised(D, k, objFL, ϵ=1e-2, n=10, test=False):
     """Samples n subsets using stochastic-greedy.
@@ -55,6 +61,22 @@ with open(f"{dataset}/dataframe.pkl", "rb") as f:
 groups = df.groupby('Label')
 dataframes = [group for _, group in groups]
 
+def segment_to_time():
+    if func=="facility-location":
+        obj = FacilityLocationFunction(n=features.shape[0], data=features, separate_rep=False, mode="dense", metric="cosine")
+    elif func=="disparity-min":
+        obj = DisparityMinFunction(n=features.shape[0], data=features, mode="dense", metric="cosine")
+    elif func=="disparity-sum":
+        obj = DisparitySumFunction(n=features.shape[0], data=features, mode="dense", metric="cosine")
+    elif func=="graph-cut":
+        obj = GraphCutFunction(n=features.shape[0], data=features, mode="dense", metric="cosine", lambdaVal=lambdaVal)
+    else:
+        raise Exception("Sorry, no submodlib function defined")
+
+    S = SGE_optimised(features.shape[0], int(features.shape[0] * subset_size_fraction), obj, n=num_sets)
+    set_indexes = []
+    for j in range(num_sets):
+        set_indexes.append(set(df.iloc[list(S[0])].Index.tolist()))
 
 lambdaVal = 0.5
 
@@ -62,7 +84,12 @@ lambdaVal = 0.5
 funcs = ["disparity-sum", "graph-cut", "facility-location", "graph-cut"]
 fracs = [0.05, 0.1, 0.15, 0.3, 0.5]
 
-run_time = {}
+
+if args.time:
+    print("we shall measure the time!!!")
+    with open(f"subset_gen_time.pkl", "rb") as f:
+        run_time = pickle.load(f)
+
 for metric in metrics:
     for func in funcs:
         run_time[func] = {}
@@ -71,47 +98,46 @@ for metric in metrics:
             num_sets = 20
             for i, df in enumerate(dataframes):
                 features = df["Features"].to_numpy()
-                
-                if func=="facility-location":
-                    obj = FacilityLocationFunction(n=features.shape[0], data=features, separate_rep=False, mode="dense", metric="cosine")
-                elif func=="disparity-min":
-                    obj = DisparityMinFunction(n=features.shape[0], data=features, mode="dense", metric="cosine")
-                elif func=="disparity-sum":
-                    obj = DisparitySumFunction(n=features.shape[0], data=features, mode="dense", metric="cosine")
-                elif func=="graph-cut":
-                    obj = GraphCutFunction(n=features.shape[0], data=features, mode="dense", metric="cosine", lambdaVal=lambdaVal)
+
+                if args.time:
+                    stmt = "segment_to_time()"
+                    setup = """
+from __main__ import segment_to_time, features, func, subset_size_fraction, df, SGE_optimised, num_sets
+"""
+                    time_to_get_subsets += timeit.timeit(stmt, setup, number=5) 
+                else:     
+                    if func=="facility-location":
+                        obj = FacilityLocationFunction(n=features.shape[0], data=features, separate_rep=False, mode="dense", metric="cosine")
+                    elif func=="disparity-min":
+                        obj = DisparityMinFunction(n=features.shape[0], data=features, mode="dense", metric="cosine")
+                    elif func=="disparity-sum":
+                        obj = DisparitySumFunction(n=features.shape[0], data=features, mode="dense", metric="cosine")
+                    elif func=="graph-cut":
+                        obj = GraphCutFunction(n=features.shape[0], data=features, mode="dense", metric="cosine", lambdaVal=lambdaVal)
+                    else:
+                        raise Exception("Sorry, no submodlib function defined")
+
+                    S = SGE_optimised(features.shape[0], int(features.shape[0]*subset_size_fraction), obj, n=num_sets)
+                    set_indexes = []
+                    for j in range(num_sets):
+                        set_indexes.append(set(df.iloc[list(S[0])].Index.tolist()))
+                    
+                    path = f"./{dataset}/SGE-{metric}/{func}/class-data-{subset_size_fraction}"
+                    if not os.path.exists(path):
+                        os.makedirs(path)
+
+                    with open(f"{path}/class_{i}.pkl", "wb") as f:
+                        pickle.dump(set_indexes, f)
+    
+
+            if args.time:
+                if func=="graph-cut":
+                        run_time[func][f"{metric}-{subset_size_fraction}-{lambdaVal}"] = time_to_get_subsets 
                 else:
-                    raise Exception("Sorry, no submodlib function defined")
+                    run_time[func][f"{metric}-{subset_size_fraction}"] = time_to_get_subsets 
+            
+                print("Submodlib funciton: %s, time:--- %s seconds ---" % (func, time_to_get_subsets))
 
-    #             setup = """
-    # subset_size_fraction = {}  # Pass the value into setup
-    # from __main__ import SGE_optimised, features, obj, num_sets
-    # """.format(subset_size_fraction)
-                
-    #             stmt = "SGE_optimised(features.shape[0], int(features.shape[0] * subset_size_fraction), obj, n=num_sets)"
-    #             time_to_get_subsets += timeit.timeit(stmt, setup, number=1)
-                
-                # start_time = time.time()
-                S = SGE_optimised(features.shape[0], int(features.shape[0]*subset_size_fraction), obj, n=num_sets)
-                # time_to_get_subsets += time.time() - start_time
-
-                set_indexes = []
-                for j in range(num_sets):
-                    set_indexes.append(set(df.iloc[list(S[0])].Index.tolist()))
-                
-                path = f"./{dataset}/SGE-{metric}/{func}/class-data-{subset_size_fraction}"
-                if not os.path.exists(path):
-                    os.makedirs(path)
-
-                with open(f"{path}/class_{i}.pkl", "wb") as f:
-                    pickle.dump(set_indexes, f)
-
-            # if func=="graph-cut":
-            #         run_time[func][f"{subset_size_fraction}-{lambdaVal}"] = time_to_get_subsets 
-            # else:
-            #     run_time[func][f"{subset_size_fraction}"] = time_to_get_subsets 
-        
-            # print("Submodlib funciton: %s, time:--- %s seconds ---" % (func, time_to_get_subsets))
-
-# with open(f"subset_gen_time.pkl", "wb") as f:
-#     pickle.dump(run_time, f)
+if args.time:
+    with open(f"subset_gen_time.pkl", "wb") as f:
+        pickle.dump(run_time, f)

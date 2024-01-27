@@ -24,7 +24,7 @@ transform = transforms.Compose([
     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
 ])
 
-def extract_features(img, resnet):
+def extract_features2(img, resnet):
     """
     :param img: A CIFAR image
     :return: List of features
@@ -43,6 +43,27 @@ def extract_features(img, resnet):
     
     return features
     # return list(features)
+
+def extract_features(img, resnet):
+    """
+    :param img: A CIFAR image
+    :return: List of features
+    """
+
+    resnet.eval()  # Disables dropout and batch normalization layers
+    
+    # Apply the transformation and convert the image to a tensor
+    img_tensor = transform(img).unsqueeze(0)
+    output = resnet(img_tensor)
+
+    last_layer = resnet.fc  # Access the final fully connected layer
+
+    resnet.zero_grad()  # Clear any existing gradients
+    output.backward(retain_graph=True)  # Retain graph for later access
+    last_layer_gradients = last_layer.weight.grad
+    
+    return last_layer_gradients
+
 
 # Create a threading.Event object
 event = threading.Event()
@@ -156,10 +177,10 @@ def get_features_dataset(dataset, model):
     df = pd.DataFrame(data)
     return df
 
-def main():
+def main(dataset):
     # Load the ResNet18 model
     resnet = torch.hub.load('pytorch/vision:v0.11.3', 'resnet18', pretrained=True)
-    cifar_dataset = cifar10["train"]
+    cifar_dataset = dataset["train"]
     df = get_features_dataset(cifar_dataset, resnet)
     return df
 
@@ -171,19 +192,19 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    print(args.dataset)
-    exit()
+    # print(args.dataset)
+    # exit()
     dataset = "cifar10"
     dataset = load_dataset(dataset)
 
     resnet = torch.hub.load('pytorch/vision:v0.11.3', 'resnet18', pretrained=True)
 
-    df = extract_features_resnet_threaded_cifar(cifar10["train"])
+    df = extract_features_resnet_threaded_cifar(dataset["train"])
     # sort the dataframe by index
     df = df.sort_values(by='Index')
     
     # Convert the 'features' column to a NumPy array
     df['Features'] = np.array(df['Features'])
     
-    with open(f"{dataset}/dataframe.pkl", "wb") as f:
+    with open(f"{dataset}/dataframe-grad.pkl", "wb") as f:
         pickle.dump(df, f)
