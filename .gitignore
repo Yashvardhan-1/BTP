@@ -14,4 +14,4 @@
 /milo-base/gpu_test
 /milo-base/time_cal_cpu_final
 /milo-base/time_cal_cpu
-/neural-submod/data
+/neural-submod/data/cifar-10*
