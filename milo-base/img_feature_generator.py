@@ -1,8 +1,8 @@
 import threading
 import queue
 import numpy as np
-import pandas as pd
 from tqdm import tqdm
+import pandas as pd
 from PIL import Image
 import torch
 import torchvision
@@ -15,6 +15,12 @@ import random
 import math
 import os
 import argparse
+import timeit
+import cProfile
+import pstats
+
+
+# pip install fsspec==2023.9.2
 
 
 # Define the image transformation
@@ -68,7 +74,7 @@ def extract_features(img, resnet):
 # Create a threading.Event object
 event = threading.Event()
 
-def extract_features_resnet_threaded_cifar(cifar_dataset, num_threads=4 ):
+def extract_features_resnet_threaded_cifar(cifar_dataset, num_threads=4):
     num_imgs = len(cifar_dataset)
 
     # Create a queue to store the image data
@@ -185,26 +191,44 @@ def main(dataset):
     return df
 
 if __name__ == '__main__':
-    # df = main()
     # Load the ResNet18 model
     parser = argparse.ArgumentParser(description='Process some integers.')
     parser.add_argument("--dataset", help="what dataset to generate features", default="cifar10")
+    parser.add_argument("--time", action="store_true", help="Description of the boolean argument")
 
     args = parser.parse_args()
-
-    # print(args.dataset)
-    # exit()
+    os.chdir("..")
     dataset = "cifar10"
-    dataset = load_dataset(dataset)
 
+    dataset = load_dataset(args.dataset)
+    exit()
     resnet = torch.hub.load('pytorch/vision:v0.11.3', 'resnet18', pretrained=True)
 
-    df = extract_features_resnet_threaded_cifar(dataset["train"])
-    # sort the dataframe by index
-    df = df.sort_values(by='Index')
-    
-    # Convert the 'features' column to a NumPy array
-    df['Features'] = np.array(df['Features'])
-    
-    with open(f"{dataset}/dataframe-grad.pkl", "wb") as f:
-        pickle.dump(df, f)
+    run_time = {}
+    if args.time:
+      cProfile.run('main(dataset)', filename="./feature_gen_time/single_threaded.prof")
+      stats = pstats.Stats("./feature_gen_time/single_threaded.prof")
+      print(f"Total Execution Time: {stats.total_tt} seconds")
+
+      run_time["single_threaded"] = stats.total_tt
+
+      with open(f"./feature_gen_time/run_time.pkl", "wb") as f:
+        pickle.dump(run_time, f)
+        f.close()
+
+      cProfile.run('extract_features_resnet_threaded_cifar(dataset["train"])', filename="./feature_gen_time/4_threaded_.prof")
+      stats = pstats.Stats("./feature_gen_time/single_threaded_.prof")
+      print(f"Total Execution Time: {stats.total_tt} seconds")
+
+      with open(f"./feature_gen_time/run_time.pkl", "wb") as f:
+        pickle.dump(run_time, f)
+        f.close()
+
+    else:
+      df = extract_features_resnet_threaded_cifar(dataset["train"])
+      # sort the dataframe by index
+      df = df.sort_values(by='Index')
+      # Convert the 'features' column to a NumPy array
+      df['Features'] = np.array(df['Features'])
+      with open(f"{dataset}/dataframe-grad.pkl", "wb") as f:
+          pickle.dump(df, f)

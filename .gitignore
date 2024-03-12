@@ -1,4 +1,5 @@
 /submodlib
+/cords
 /milo-base/features_cifar_check.csv
 /milo-base/np.csv
 /milo-base/dataframe.pkl
@@ -6,3 +7,11 @@
 /data
 /milo-base/cifar10
 /milo-base/cifar100
+*.pkl
+/milo-base/*pkl
+/milo-base/*txt
+/milo-base/time_cal
+/milo-base/gpu_test
+/milo-base/time_cal_cpu_final
+/milo-base/time_cal_cpu
+/neural-submod/data
