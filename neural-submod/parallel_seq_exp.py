@@ -15,7 +15,7 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 import statistics
 import matplotlib.pyplot as plt
 import csv
-
+from itertools import combinations, permutations
 
 seed = 42
 torch.manual_seed(seed)
@@ -60,11 +60,8 @@ test_dataloader = DataLoader(test_dataset, batch_size=64, shuffle=False, num_wor
 # %%
 num_classes = 10
 subset_fraction = 0.1
-num_runs = 1
-split_ratio = 0.9
 epochs = 40
 model_name = "LeNet"
-submod_func = "facility-location"
 optimizer_name = "adam"
 
 # %% [markdown]
@@ -101,25 +98,47 @@ import os
 print(os.getcwd())
 
 # %%
-with open("./data/seq_submod_subset/permutation_subsets/facility-location_disparity-sum_disparity-min_graph-cut.pkl", "rb") as f:
-    data = pickle.load(f)
+func_list = ["facility-location", "disparity-min",  "disparity-sum", "graph-cut"]
 
 # %%
 import os 
-path = "./data/seq_submod_subset/permutation_subsets/"
+path = "./data/seq_submod_subset/permutation_subsets_2/"
 dir_list = os.listdir(path) 
 
 # %%
-
+with open("./data/seq_submod_subset/permutation_subsets_2/facility-location_disparity-sum.pkl", "rb") as f:
+    test = pickle.load(f)
 
 # %%
-for exp_data_file in dir_list:
-    if exp_data_file.endswith(".pkl"):
+print(len(test))
+
+# %%
+print(dir_list)
+
+# %%
+res = {}
+
+for order in permutations(func_list):
+    per_func_list = list(order)
+    file1 = per_func_list[0]+"_"+per_func_list[1]
+    file2 = per_func_list[2]+"_"+per_func_list[3]
+
+    data1 = None
+    data2 = None
+
+    if f"{file1}.pkl" in dir_list and f"{file2}.pkl" in dir_list:
         try:
-            with open(f"./data/seq_submod_subset/permutation_subsets/{exp_data_file}") as f:
-                data = pickle.load(f)
+            with open(f"./data/seq_submod_subset/permutation_subsets_2/{file1}.pkl", "rb") as f:
+                data1 = pickle.load(f)
+            with open(f"./data/seq_submod_subset/permutation_subsets_2/{file2}.pkl", "rb") as f:
+                data2 = pickle.load(f)
         except:
-            print(f"Error while loading {exp_data_file}")
+            print("Error while loading the data")
+            continue
+        
+    if data1 is None or data2 is None:
+        print("data is None")
+        continue 
 
     if model_name=="LeNet":
         model = LeNet()
@@ -146,16 +165,12 @@ for exp_data_file in dir_list:
     for epoch in tqdm(range(epochs)):
         # Train loop
         if epoch==0:
-            sub_dataset = SubDataset(indices=data[0], dataset=train_dataset)
+            sub_dataset = SubDataset(indices=list(set(data1[0]) | set(data2[0])), dataset=train_dataset)
             subset_train_dataloader = DataLoader(sub_dataset, batch_size=64, shuffle=True)
         elif epoch==20:
-            sub_dataset = SubDataset(indices=data[1], dataset=train_dataset)
+            sub_dataset = SubDataset(indices=list(set(data1[1]) | set(data2[1])), dataset=train_dataset)
             subset_train_dataloader = DataLoader(sub_dataset, batch_size=64, shuffle=True)
-        elif epoch==30:
-            sub_dataset = SubDataset(indices=data[2], dataset=train_dataset)
-            subset_train_dataloader = DataLoader(sub_dataset, batch_size=64, shuffle=True)
-        
-            
+          
         for images, labels in subset_train_dataloader:
 
             images = images.to(device)
@@ -199,7 +214,7 @@ for exp_data_file in dir_list:
     correct = 0
     total = 0
     with torch.no_grad():
-        for images, labels in tqdm(test_dataloader):
+        for images, labels in test_dataloader:
             images = images.to(device)
             labels = labels.to(device)
 
@@ -219,18 +234,22 @@ for exp_data_file in dir_list:
     # Customize the plot (optional)
     plt.xlabel("Epoch")
     plt.ylabel("Accuracy")
-    plt.title(f"{exp_data_file.split('.')[0]} Accuracy Plot")
+    plt.title(f"{file1}_{file2} Accuracy Plot")
 
     # Display the plot
     # plt.show()
-    plt.savefig(f"./results/seq/plots/{exp_data_file.split('.')[0]}")
-
-
-    with open(f"./results/seq/accuracies/{exp_data_file.split('.')[0]}", "w") as f:
-        f.write(accuracy_list)
+    plt.savefig(f"./results/para/plots/{file1}_{file2}.png")
     
-    with open(f"./results/seq/accuracies.csv", "a", newline="") as csvfile:
+    res[f"{file1}_{file2}"] = accuracy_list
+
+    print(accuracy_list)
+
+    with open(f"./results/para/accuracies/{file1}_{file2}.txt", "w", newline="") as csvfile:
         writer = csv.writer(csvfile)
         writer.writerow(accuracy_list)
+        
+    with open(f"./results/para/accuracies.pkl", "wb") as f:
+        pickle.dump(res, f)
 
 
+# 1774328
