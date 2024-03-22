@@ -15,3 +15,5 @@
 /milo-base/time_cal_cpu_final
 /milo-base/time_cal_cpu
 /neural-submod/data/cifar-10*
+/neural-submod/data/seq_submod_subset/per*
+/neural-submod/data/seq_submod_subset/*.out

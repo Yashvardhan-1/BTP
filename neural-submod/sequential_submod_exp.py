@@ -24,7 +24,7 @@ torch.manual_seed(seed)
 if torch.backends.mps.is_available():
     device = "mps"
 elif torch.cuda.is_available():
-    device = "cuda:4" # change the available gpu number
+    device = "cuda:5" # change the available gpu number
 else:
     device = "cpu"
 
@@ -101,26 +101,32 @@ import os
 print(os.getcwd())
 
 # %%
-with open("./data/seq_submod_subset/permutation_subsets/facility-location_disparity-sum_disparity-min_graph-cut.pkl", "rb") as f:
-    data = pickle.load(f)
+# with open("./data/seq_submod_subset/permutation_subsets/facility-location_disparity-sum_disparity-min_graph-cut.pkl", "rb") as f:
+#     test = pickle.load(f)
 
 # %%
 import os 
-path = "./data/seq_submod_subset/permutation_subsets/"
+path = "./data/seq_submod_subset/permutation_subsets_4/"
 dir_list = os.listdir(path) 
 
 # %%
-
+print(dir_list[0])
 
 # %%
+res = {}
+
 for exp_data_file in dir_list:
+    data = None
     if exp_data_file.endswith(".pkl"):
         try:
-            with open(f"./data/seq_submod_subset/permutation_subsets/{exp_data_file}") as f:
+            with open(f"./data/seq_submod_subset/permutation_subsets_4/{exp_data_file}", "rb") as f:
                 data = pickle.load(f)
         except:
             print(f"Error while loading {exp_data_file}")
-
+            continue
+    
+    if data is None:
+        print("Data is None!!")
     if model_name=="LeNet":
         model = LeNet()
     elif model_name=="resnet18":
@@ -214,6 +220,7 @@ for exp_data_file in dir_list:
     x = range(epochs)
 
     # Plot the accuracies
+    plt.clf()
     plt.plot(x, accuracy_list)
 
     # Customize the plot (optional)
@@ -225,12 +232,26 @@ for exp_data_file in dir_list:
     # plt.show()
     plt.savefig(f"./results/seq/plots/{exp_data_file.split('.')[0]}")
 
-
     with open(f"./results/seq/accuracies/{exp_data_file.split('.')[0]}", "w") as f:
-        f.write(accuracy_list)
-    
-    with open(f"./results/seq/accuracies.csv", "a", newline="") as csvfile:
-        writer = csv.writer(csvfile)
+        writer = csv.writer(f)
         writer.writerow(accuracy_list)
+        
+    res[exp_data_file.split('.')[0]] = accuracy_list
+        
+    with open(f"./results/seq/accuracies.pkl", "wb") as f:
+        pickle.dump(res, f)
+
+# %%
+plt.clf()
+for label, data in res.items():
+    plt.plot(data, label=label)
+
+plt.tick_params(bottom=False, labelbottom=False)
+plt.xlabel("Epochs")
+plt.ylabel("Accuracy")
+plt.title("All Accuracies")
+plt.legend()
+plt.savefig("./results/seq/accuracies.png")
 
 
+# 157477

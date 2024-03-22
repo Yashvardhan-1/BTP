@@ -41,8 +41,27 @@ metric = "cosine"
 which_exp = 4
 
 # %%
+# import argparse
+# parser = argparse.ArgumentParser(description="Program to generate sequential subset of data",
+#                                  formatter_class=argparse.RawTextHelpFormatter)
 
-# which_exp = input("Whhy you want to generate subset?\
+# parser.add_argument("--exp", type=int,
+#                     default=4,
+#                     help="""
+#                         Why you want to generate subset?
+#                         2: parallel_seq_data_gen
+#                         4: seq_data_gen
+#                         5: maa chudaye duniya wale
+#                     """,
+#                     required=True)
+
+# # %%
+# args = parser.parse_args()
+# which_exp = args.exp
+
+# %%
+
+# which_exp = input("Why you want to generate subset?\
 #                    2: paraller_seq_data_geb\
 #                    4: seq_data_gen\
 #                    5: maa chudaye duniya wale")
@@ -52,6 +71,7 @@ which_exp = 4
 func_list = ["facility-location", "disparity-min",  "disparity-sum", "graph-cut"]
 
 # %%
+print(which_exp)
 if which_exp==4:
     subset_fraction_size = [0.5, 0.6, 0.5]
 elif which_exp==2:
@@ -59,8 +79,6 @@ elif which_exp==2:
 else:
     print("Error: Experiment not defined!")
     exit()
-
-print(f"experiment: {which_exp}")
 
 # %%
 dir_ls = os.listdir(f"./permutation_subsets_{which_exp}")
@@ -77,6 +95,7 @@ for order in permutations(func_list, which_exp):
     filename = filename[:-1]
 
     if filename in dir_ls:
+        print(f"{filename} is already present in directory hence skipping!")
         continue;
 
     print(filename)
@@ -295,4 +314,4 @@ for order in permutations(func_list, which_exp):
 #             pickle.dump(list_indexes, f)
 
 
-# 3684444
+# 117731

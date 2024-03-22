@@ -170,7 +170,8 @@ for order in permutations(func_list):
         elif epoch==20:
             sub_dataset = SubDataset(indices=list(set(data1[1]) | set(data2[1])), dataset=train_dataset)
             subset_train_dataloader = DataLoader(sub_dataset, batch_size=64, shuffle=True)
-          
+        
+            
         for images, labels in subset_train_dataloader:
 
             images = images.to(device)
@@ -214,7 +215,7 @@ for order in permutations(func_list):
     correct = 0
     total = 0
     with torch.no_grad():
-        for images, labels in test_dataloader:
+        for images, labels in tqdm(test_dataloader):
             images = images.to(device)
             labels = labels.to(device)
 
@@ -229,6 +230,7 @@ for order in permutations(func_list):
     x = range(epochs)
 
     # Plot the accuracies
+    plt.clf()
     plt.plot(x, accuracy_list)
 
     # Customize the plot (optional)
@@ -251,5 +253,14 @@ for order in permutations(func_list):
     with open(f"./results/para/accuracies.pkl", "wb") as f:
         pickle.dump(res, f)
 
+# %%
+plt.clf()
+for label, data in res.items():
+    plt.plot(data, label=label)
 
-# 1774328
+plt.tick_params(bottom=False, labelbottom=False)
+plt.xlabel("Epochs")
+plt.ylabel("Accuracy")
+plt.title("All Accuracies")
+plt.legend()
+plt.savefig("./results/para/accuracies.png")
