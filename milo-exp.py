@@ -18,7 +18,7 @@ import statistics
 seed = 42
 torch.manual_seed(seed)
 
-model_name = "resnet101"
+model_name = "LeNeT"
 
 if torch.backends.mps.is_available():
     device = "mps"
@@ -57,7 +57,7 @@ train_dataset = datasets.CIFAR10(root="./data", train=True, download=True, trans
 test_dataset = datasets.CIFAR10(root="./data", train=False, download=True, transform=transform_test)
 
 # Create dataloaders
-train_dataloader = DataLoader(train_dataset, batch_size=64, shuffle=True, num_workers=2)
+train_dataloader = DataLoader(train_dataset, batch_size=256, shuffle=True, num_workers=2)
 test_dataloader = DataLoader(test_dataset, batch_size=64, shuffle=False, num_workers=2)
 
 class LeNet(nn.Module):    
@@ -103,15 +103,15 @@ class SubDataset(Dataset):
     
 store = {}
 
-frac_list = [0.05, 0.10, 0.15, 0.3, 0.5]
-func_list = ["facility-location", "graph-cut", "disparity-min", "disparity-sum"]
-R = 10
+frac_list = [0.05]
+func_list = ["disparity-min"]
+R = 1
 device = "cuda:2"
-epochs = 200
+epochs = 20
 metric = "euclidean"
-    
 for func in func_list:
     store[func] = {}
+    acc_list = []
     for subset_fraction in frac_list:
         num_classes = 10
         class_data = []
@@ -134,7 +134,7 @@ for func in func_list:
                 S.extend(class_data[j][i])
             data.append(S)
         
-        print(len(data[0]))
+        print(len(data))
 
         torch.manual_seed(42)
 
@@ -175,25 +175,29 @@ for func in func_list:
                 loss.backward()
                 optimizer.step()
 
-        time_taken = time.time() - start_time    
-        print("--- %s seconds ---" % (time_taken))
+        # time_taken = time.time() - start_time    
+        # print("--- %s seconds ---" % (time_taken))
 
         # Evaluate on test set
-        correct = 0
-        total = 0
-        with torch.no_grad():
-            for images, labels in tqdm(test_dataloader):
-                images = images.to(device)
-                labels = labels.to(device)
+            correct = 0
+            total = 0
+            with torch.no_grad():
+                for images, labels in tqdm(test_dataloader):
+                    images = images.to(device)
+                    labels = labels.to(device)
 
-                outputs = model(images)
-                predictions = torch.argmax(outputs, dim=1)
-                correct += (predictions == labels).sum().item()
-                total += labels.size(0)
+                    outputs = model(images)
+                    predictions = torch.argmax(outputs, dim=1)
+                    correct += (predictions == labels).sum().item()
+                    total += labels.size(0)
 
-        accuracy = correct / total
-        print(f"Accuracy {func} {subset_fraction}: {accuracy:.4f}")
+            accuracy = correct / total
+            acc_list.append(accuracy)
 
+            print(f"Accuracy {func} {subset_fraction}: {accuracy:.4f}")
+
+
+        print(acc_list)
         store[func][subset_fraction] = accuracy
         with open(f"store-{model_name}.pkl", "wb") as f:
             pickle.dump(store, f)

@@ -21,7 +21,7 @@ import pstats
 
 
 # pip install fsspec==2023.9.2
-
+dataset = "cifar10"
 
 # Define the image transformation
 transform = transforms.Compose([
@@ -200,8 +200,20 @@ if __name__ == '__main__':
     os.chdir("..")
     dataset = "cifar10"
 
-    dataset = load_dataset(args.dataset)
-    exit()
+    transform_train = transforms.Compose([
+        transforms.RandomCrop(32, padding=4),
+        transforms.RandomHorizontalFlip(),
+        transforms.ToTensor(),
+        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
+    ])
+
+    transform_test = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
+    ])
+
+    # Load CIFAR10 datasets
+    dataset = datasets.CIFAR10(root="../data", train=True, download=True, transform=transform_train)
     resnet = torch.hub.load('pytorch/vision:v0.11.3', 'resnet18', pretrained=True)
 
     run_time = {}
@@ -226,9 +238,7 @@ if __name__ == '__main__':
 
     else:
       df = extract_features_resnet_threaded_cifar(dataset["train"])
-      # sort the dataframe by index
       df = df.sort_values(by='Index')
-      # Convert the 'features' column to a NumPy array
       df['Features'] = np.array(df['Features'])
       with open(f"{dataset}/dataframe-grad.pkl", "wb") as f:
           pickle.dump(df, f)

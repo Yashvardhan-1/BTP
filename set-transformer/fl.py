@@ -117,21 +117,51 @@ with open(ranks_filename, 'rb') as f:
 
 model = SetTransformer(dim_input=10, num_outputs=1000, dim_output=1, num_inds=32, dim_hidden=128, num_heads=4, ln=False)
 optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+#criterion = nn.CrossEntropyLoss()
+#criterion = nn.BCEWithLogitsLoss()
+criterion = nn.mse_loss()
+
+# model = nn.DataParallel(model)
+# model = model.cuda()
 
 
-for epoch in range(20):
+losses = []
+
+for epoch in range(10):
     model.train()
-    total_iou_loss = 0
-    for i in range(2):
+    total_loss = 0
+    for i in range(10):
         set_data = sets[i]
+        #check if it can take multiple sets
         expected_indices = subset_indices_dict[i]
+        #print(expected_indices)
+        expected_output = torch.zeros(1000)
+        expected_output[expected_indices] = 1
+        #print(expected_output)
         # Prepare input tensor
         inputs = torch.Tensor(set_data).unsqueeze(0)  # Add batch dimension
+        print(inputs.shape)
         # Forward pass
         optimizer.zero_grad()
         outputs = model(inputs)
-        print(outputs)
+        print(outputs.shape)
+
+        #print(len(outputs))
+        #print(outputs)
+        loss = criterion(outputs.squeeze(), expected_output)
+        total_loss += loss.item()
+        loss.backward()
+        optimizer.step()
+
+    avg_loss = total_loss / 10  # Assuming 100 samples
+    losses.append(avg_loss)
+    print(f"Epoch {epoch+1}, Average Loss: {avg_loss}")
+
+
+        #print(outputs)
         #probability = outputs.argmax(dim=1).tolist()
         #print(probability)
 
         
+
+

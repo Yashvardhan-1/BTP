@@ -88,6 +88,7 @@ for i, s in enumerate(dir_ls):
 # %%
 for order in permutations(func_list, which_exp):
     per_func_list = list(order)
+    print("permutation",per_func_list)
     filename = ""
 
     for func in per_func_list:
@@ -313,5 +314,4 @@ for order in permutations(func_list, which_exp):
 #         with open(f"permutation_subsets/{filename}.pkl", "wb") as f:
 #             pickle.dump(list_indexes, f)
 
-
-# 117731
+# 2061183

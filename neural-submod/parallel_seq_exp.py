@@ -24,7 +24,7 @@ torch.manual_seed(seed)
 if torch.backends.mps.is_available():
     device = "mps"
 elif torch.cuda.is_available():
-    device = "cuda:4" # change the available gpu number
+    device = "cuda:5" # change the available gpu number
 else:
     device = "cpu"
 
@@ -56,6 +56,9 @@ test_dataloader = DataLoader(test_dataset, batch_size=64, shuffle=False, num_wor
 
 # %% [markdown]
 # ## Parameters
+
+# %%
+print(len(train_dataset))
 
 # %%
 num_classes = 10
@@ -116,10 +119,25 @@ print(len(test))
 print(dir_list)
 
 # %%
+order_list = []
+order_list.append([0, 1, 2, 3])
+order_list.append([0, 1, 3, 2])
+order_list.append([1, 0, 2, 3])
+order_list.append([1, 0, 3, 2])
+order_list.append([1, 2, 3, 0])
+order_list.append([1, 2, 0, 3])
+order_list.append([2, 1, 3, 0])
+order_list.append([2, 1, 0, 3])
+order_list.append([1, 3, 2, 0])
+order_list.append([1, 3, 0, 2])
+order_list.append([3, 1, 2, 0])
+order_list.append([3, 1, 0, 2])
+
+# %%
 res = {}
 
-for order in permutations(func_list):
-    per_func_list = list(order)
+for order in order_list:
+    per_func_list = [func_list[i] for i in order]
     file1 = per_func_list[0]+"_"+per_func_list[1]
     file2 = per_func_list[2]+"_"+per_func_list[3]
 
@@ -165,13 +183,22 @@ for order in permutations(func_list):
     for epoch in tqdm(range(epochs)):
         # Train loop
         if epoch==0:
-            sub_dataset = SubDataset(indices=list(set(data1[0]) | set(data2[0])), dataset=train_dataset)
+            train_data = list(set(data1[0]) | set(data2[0]))
+            random.shuffle(train_data)
+            if len(train_data) > int(0.3*len(train_dataset)):
+                train_data = train_data[:int(0.3*len(train_dataset))]
+
+            sub_dataset = SubDataset(indices=train_data, dataset=train_dataset)
             subset_train_dataloader = DataLoader(sub_dataset, batch_size=64, shuffle=True)
         elif epoch==20:
-            sub_dataset = SubDataset(indices=list(set(data1[1]) | set(data2[1])), dataset=train_dataset)
+            train_data = list(set(data1[1]) | set(data2[1]))
+            random.shuffle(train_data)
+            if len(train_data) > int(0.15*len(train_dataset)):
+                train_data = train_data[:int(0.15*len(train_dataset))]
+
+            sub_dataset = SubDataset(indices=train_data, dataset=train_dataset)
             subset_train_dataloader = DataLoader(sub_dataset, batch_size=64, shuffle=True)
         
-            
         for images, labels in subset_train_dataloader:
 
             images = images.to(device)
@@ -240,17 +267,17 @@ for order in permutations(func_list):
 
     # Display the plot
     # plt.show()
-    plt.savefig(f"./results/para/plots/{file1}_{file2}.png")
+    plt.savefig(f"./results/para2/plots/{file1}_{file2}.png")
     
     res[f"{file1}_{file2}"] = accuracy_list
 
     print(accuracy_list)
 
-    with open(f"./results/para/accuracies/{file1}_{file2}.txt", "w", newline="") as csvfile:
+    with open(f"./results/para2/accuracies/{file1}_{file2}.txt", "w", newline="") as csvfile:
         writer = csv.writer(csvfile)
         writer.writerow(accuracy_list)
         
-    with open(f"./results/para/accuracies.pkl", "wb") as f:
+    with open(f"./results/para2/accuracies.pkl", "wb") as f:
         pickle.dump(res, f)
 
 # %%
@@ -263,4 +290,6 @@ plt.xlabel("Epochs")
 plt.ylabel("Accuracy")
 plt.title("All Accuracies")
 plt.legend()
-plt.savefig("./results/para/accuracies.png")
+plt.savefig("./results/para2/accuracies.png")
+
+# [1] 1987617
