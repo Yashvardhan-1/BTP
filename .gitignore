@@ -17,3 +17,4 @@
 /neural-submod/data/cifar-10*
 /neural-submod/data/seq_submod_subset/per*
 /neural-submod/data/seq_submod_subset/*.out
+/neural-submod/data/milo-data-gen/cifar10-dino-cls/
