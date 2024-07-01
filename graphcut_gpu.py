@@ -4,6 +4,16 @@ import torch
 import torch.nn as nn
 import numpy as np
 import random
+import torch
+import torch.nn.functional as F
+from sklearn.cluster import Birch
+from sklearn.metrics.pairwise import euclidean_distances, cosine_similarity, pairwise_distances
+from sklearn.neighbors import NearestNeighbors
+from scipy import sparse
+import pickle
+import time
+import os
+
 
 class SetFunction(nn.Module):
     def __init__(self):
@@ -50,9 +60,6 @@ class SetFunction(nn.Module):
         else:
             return None
 
-    def cluster_init(self, n: int, k_dense: List[List[float]], ground: Set[int],
-                     partial: bool, lambda_: float) -> None:
-        self.cluster_init(n, k_dense, ground, partial, lambda_)
 
     def set_memoization(self, X: Set[int]) -> None:
         self.set_memoization(X)
@@ -61,9 +68,8 @@ class SetFunction(nn.Module):
         self.clear_memoization()
 
 
-import torch
-import random
-from typing import List, Tuple, Set
+
+
 
 class NaiveGreedyOptimizer:
     def __init__(self):
@@ -73,17 +79,12 @@ class NaiveGreedyOptimizer:
     def equals(val1, val2, eps):
         return abs(val1 - val2) < eps
 
-    def maximize(
-        self, f_obj, budget, stop_if_zero_gain, stopIfNegativeGain, verbose, show_progress, costs, cost_sensitive_greedy
-    ):
+    def maximize(self, f_obj, budget, stop_if_zero_gain, stopIfNegativeGain, verbose, show_progress, costs, cost_sensitive_greedy):
         greedy_vector = []
         greedy_set = set()
-        if not costs:
-            # greedy_vector = [None] * budget
-            greedy_set = set()
         rem_budget = budget
         ground_set = f_obj.get_effective_ground_set()
-        #print(ground_set)
+        
         if verbose:
             print("Ground set:")
             print(ground_set)
@@ -112,7 +113,7 @@ class NaiveGreedyOptimizer:
                 if i in greedy_set:
                     continue
                 gain = f_obj.marginal_gain_with_memoization(greedy_set, i, False)
-                # print(gain)
+                
                 if verbose:
                     print(f"Gain of {i} is {gain}")
 
@@ -132,6 +133,7 @@ class NaiveGreedyOptimizer:
                 greedy_set.add(best_id)
                 greedy_vector.append((best_id, best_val))
                 rem_budget -= 1
+                
 
                 if verbose:
                     print(f"Added element {best_id} and the gain is {best_val}")
@@ -154,34 +156,63 @@ class NaiveGreedyOptimizer:
 
 
 import torch
-import torch.nn.functional as F
-from sklearn.cluster import Birch
-from sklearn.metrics.pairwise import euclidean_distances, cosine_similarity, pairwise_distances
-from sklearn.neighbors import NearestNeighbors
-from scipy import sparse
-import pickle
-import time
-import os
 
-def cos_sim_square(A):
-    similarity = torch.matmul(A, A.t())
+def create_kernel_dense_sklearn(X, metric, X_rep=None, batch_size=256):
+    if metric not in ["euclidean", "cosine", "dot"]:
+        raise ValueError("ERROR: unsupported metric for this method of kernel creation")
 
-    square_mag = torch.diag(similarity)
+    # Initialize an empty list to hold batch results
+    batched_results = []
+    device = X.device
 
-    inv_square_mag = 1 / square_mag
-    inv_square_mag[torch.isinf(inv_square_mag)] = 0
+    # Pre-compute norms for cosine similarity
+    if metric == "cosine":
+        X_norm = X / X.norm(dim=1, keepdim=True)
 
-    inv_mag = torch.sqrt(inv_square_mag)
+    if X_rep is not None:
+        X_rep = X_rep.to(device)
+        if metric == "cosine":
+            X_rep = X_rep / X_rep.norm(dim=1, keepdim=True)
 
-    cosine = similarity * inv_mag
-    cosine = cosine.t() * inv_mag
-    return cosine
+    # Determine the number of batches
+    total_samples = X.shape[0]
+    num_batches = (total_samples + batch_size - 1) // batch_size
 
-def cos_sim_rectangle(A, B):
-    num = torch.matmul(A, B.t())
-    p1 = torch.sqrt(torch.sum(A**2, dim=1)).unsqueeze(1)
-    p2 = torch.sqrt(torch.sum(B**2, dim=1)).unsqueeze(0)
-    return num / (p1 * p2)
+    for batch_idx in range(num_batches):
+        start_idx = batch_idx * batch_size
+        end_idx = min(start_idx + batch_size, total_samples)
+
+        # Slice the batch for X
+        X_batch = X[start_idx:end_idx].to(device)
+
+        if metric == "euclidean":
+            if X_rep is None:
+                D_batch = torch.cdist(X_batch, X, p=2)
+            else:
+                D_batch = torch.cdist(X_batch, X_rep, p=2)
+            gamma = 1 / X.shape[1]
+            dense_batch = torch.exp(-D_batch * gamma)
+
+        elif metric == "cosine":
+            X_batch_norm = X_batch / X_batch.norm(dim=1, keepdim=True)
+            if X_rep is None:
+                dense_batch = torch.matmul(X_batch_norm, X_norm.t())
+            else:
+                dense_batch = torch.matmul(X_batch_norm, X_rep.t())
+
+        elif metric == "dot":
+            if X_rep is None:
+                dense_batch = torch.matmul(X_batch, X.t())
+            else:
+                dense_batch = torch.matmul(X_batch, X_rep.t())
+
+        batched_results.append(dense_batch)
+
+    # Concatenate all batch results along the dimension 0
+    dense = torch.cat(batched_results, dim=0)
+
+    return dense
+
 
 def create_sparse_kernel(X, metric, num_neigh, n_jobs=1, method="sklearn"):
     if num_neigh > X.shape[0]:
@@ -192,145 +223,36 @@ def create_sparse_kernel(X, metric, num_neigh, n_jobs=1, method="sklearn"):
     if num_neigh == -1:
         num_neigh = X.shape[0]  # default is the total number of datapoints
 
-    # Assuming X is a PyTorch tensor
-
-
-    # Use PyTorch functions for the nearest neighbors search
     if metric == 'euclidean':
-      distances = torch.cdist(X, X, p=2)  # Euclidean distance
+        distances = torch.cdist(X, X, p=2)  # Euclidean distance
     elif metric == 'cosine':
-      distances = 1 - torch.nn.functional.cosine_similarity(X, X, dim=1)  # Cosine similarity as distance
+        distances = 1 - torch.nn.functional.cosine_similarity(X.unsqueeze(1), X.unsqueeze(0), dim=2)
 
     # Exclude the distance to oneself (diagonal elements)
     distances.fill_diagonal_(float('inf'))
 
     # Find the indices of the k-nearest neighbors using torch.topk
-    _, ind = torch.topk(distances, k=num_neigh, largest=False)
+    _, ind = torch.topk(distances, k=num_neigh, largest=False, dim=1)
 
-    # ind_l = [(index[0], x.item()) for index, x in torch.ndenumerate(ind)]
-        # Convert indices to row and col lists
-    row = []
-    col = []
-    for i, indices_row in enumerate(ind):
-        for j in indices_row:
-            row.append(i)
-            col.append(j.item())
+    row, col = torch.meshgrid(torch.arange(ind.shape[0]), torch.arange(num_neigh), indexing='ij')
+    row = row.reshape(-1)
+    col = ind.reshape(-1)
 
-    mat = torch.zeros_like(distances)
-    mat[row, col] = 1
-    dense_ = dense * mat  # Only retain similarity of nearest neighbors
-    sparse_coo = torch.sparse_coo_tensor(torch.tensor([row, col]), mat[row, col], dense.size())
-    # Convert the COO tensor to CSR format
-    sparse_csr = sparse_coo.coalesce()
-    return sparse_csr
-    # pass
+    values = torch.ones_like(row, dtype=dense.dtype)  # Use ones to mark connections in the adjacency matrix
+    sparse_coo = torch.sparse_coo_tensor(torch.stack((row, col)), values, dense.size())
+    dense_ = dense * sparse_coo.to_dense()  # Element-wise multiplication to retain only neighbor connections
 
+    # Return the result in sparse format
+    return sparse_coo.coalesce()
 
-def create_kernel_dense(X, metric, method="sklearn"):
-    dense = None
-    if method == "sklearn":
-        dense = create_kernel_dense_sklearn(X, metric)
-    else:
-        raise Exception("For creating dense kernel, only 'sklearn' method is supported")
-    return dense
-
-def create_kernel_dense_sklearn(X, metric, X_rep=None, batch=0):
-    dense = None
-    D = None
-    batch_size = batch
-    if metric == "euclidean":
-        if X_rep is None:
-            # print(X.shape)
-            # Process data in batches for torch.cdist
-            for i in range(0, len(X), batch_size):
-                X_batch = X[i:i+batch_size].to(device="cuda")
-                # print(X_batch.shape)
-                D_batch = torch.cdist(X_batch, X, p=2).to(device="cuda")
-                gamma = 1 / X.shape[1]
-                dense_batch = torch.exp(-D_batch * gamma).to(device="cuda")
-                # Accumulate results from batches
-                if dense is None:
-                    dense = dense_batch
-                else:
-                    dense = torch.cat([dense, dense_batch])
-        else:
-            # Process data in batches for torch.cdist
-            for i in range(0, len(X_rep), batch_size):
-                X_rep_batch = X_rep[i:i+batch_size].to(device="cuda")
-                D_batch = torch.cdist(X_rep_batch, X).to(device="cuda")
-                gamma = 1 / X.shape[1]
-                dense_batch = torch.exp(-D_batch * gamma).to(device="cuda")
-                # Accumulate results from batches
-                if dense is None:
-                    dense = dense_batch
-                else:
-                    dense = torch.cat([dense, dense_batch])
-
-    elif metric == "cosine":
-        if X_rep is None:
-            # Process data in batches for torch.nn.functional.cosine_similarity
-            for i in range(0, len(X), batch_size):
-                X_batch = X[i:i+batch_size].to(device="cuda")
-                dense_batch = torch.nn.functional.cosine_similarity(X_batch.unsqueeze(1), X.unsqueeze(0), dim=2)
-                # Accumulate results from batches
-                if dense is None:
-                    dense = dense_batch
-                else:
-                    dense = torch.cat([dense, dense_batch])
-        else:
-            # Process data in batches for torch.nn.functional.cosine_similarity
-            for i in range(0, len(X_rep), batch_size):
-                X_rep_batch = X_rep[i:i+batch_size].to(device="cuda")
-                dense_batch = torch.nn.functional.cosine_similarity(X_rep_batch, X, dim=1)
-                # Accumulate results from batches
-                if dense is None:
-                    dense = dense_batch
-                else:
-                    dense = torch.cat([dense, dense_batch])
-
-    elif metric == "dot":
-        if X_rep is None:
-            # Process data in batches for torch.matmul
-            for i in range(0, len(X), batch_size):
-                X_batch = X[i:i+batch_size].to(device="cuda")
-                dense_batch = torch.matmul(X_batch, X.t())
-                # Accumulate results from batches
-                if dense is None:
-                    dense = dense_batch
-                else:
-                    dense = torch.cat([dense, dense_batch])
-        else:
-            # Process data in batches for torch.matmul
-            for i in range(0, len(X_rep), batch_size):
-                X_rep_batch = X_rep[i:i+batch_size].to(device="cuda")
-                dense_batch = torch.matmul(X_rep_batch, X.t())
-                # Accumulate results from batches
-                if dense is None:
-                    dense = dense_batch
-                else:
-                    dense = torch.cat([dense, dense_batch])
-
-    else:
-        raise Exception("ERROR: unsupported metric for this method of kernel creation")
-
-    if X_rep is not None:
-        assert dense.shape == (X_rep.shape[0], X.shape[0])
-    else:
-        assert dense.shape == (X.shape[0], X.shape[0])
-
-    torch.cuda.empty_cache()
-    return dense
-
-
-def create_kernel(X, metric, mode="dense", num_neigh=-1, n_jobs=1, X_rep=None, method="sklearn", batch=0):
-
+def create_kernel(X, metric, mode="dense", num_neigh=-1, n_jobs=1, X_rep=None, method="sklearn",batch_size=0):
     if X_rep is not None:
         assert X_rep.shape[1] == X.shape[1]
 
     if mode == "dense":
-        dense = None
-        dense = globals()['create_kernel_dense_'+method](X, metric, X_rep, batch)
-        return dense.clone().detach()
+        #print("here")
+        dense = globals()['create_kernel_dense_'+method](X, metric, X_rep,batch_size)
+        return dense
 
     elif mode == "sparse":
         if X_rep is not None:
@@ -344,60 +266,59 @@ def create_kernel(X, metric, mode="dense", num_neigh=-1, n_jobs=1, X_rep=None, m
 from typing import List, Set
 import random
 
-class GraphCutFunction(SetFunction):
-    # def __init__(self, n: int, mode: str, metric: str, master_ground_kernel: List[List[float]] = None,
-    #              ground_ground_kernel: List[List[float]] = None, arr_val: List[float] = None,
-    #              arr_count: List[int] = None, arr_col: List[int] = None, partial: bool = False,
-    #              ground: Set[int] = None, lambdaVal: float = 0.0):
-    def __init__(self, n, mode, lambdaVal, separate_rep=None, n_rep=None, mgsijs=None, ggsijs=None, data=None, data_rep=None, metric="cosine", num_neighbors=None,batch_size=0,
-                 master_ground_kernel: List[List[float]] = None,
-                 ground_ground_kernel: List[List[float]] = None, arr_val: List[float] = None,
-                 arr_count: List[int] = None, arr_col: List[int] = None, partial: bool = False,
-                 ground: Set[int] = None):
-        super(SetFunction, self).__init__()
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+from typing import List, Set
+import random
+
+
+
+class GraphCutpy(SetFunction):
+    def __init__(self, n, mode, lambdaVal, separate_rep=None, n_rep=None, mgsijs=None, ggsijs=None, data=None, data_rep=None, metric="cosine", num_neighbors=None,
+                 master_ground_kernel: List[List[float]] = None, ground_ground_kernel: List[List[float]] = None,
+                 arr_val: List[float] = None, arr_count: List[int] = None, arr_col: List[int] = None,
+                 partial: bool = False, ground: Set[int] = None, batch_size=0):
+        super(GraphCutpy, self).__init__()
         self.n = n
         self.mode = mode
         self.lambda_ = lambdaVal
-        self.separate_rep=separate_rep
+        self.separate_rep = separate_rep
         self.n_rep = n_rep
         self.partial = partial
         self.original_to_partial_index_map = {}
         self.mgsijs = mgsijs
         self.ggsijs = ggsijs
         self.data = data
-        self.data_rep=data_rep
+        self.data_rep = data_rep
         self.metric = metric
         self.num_neighbors = num_neighbors
         self.effective_ground_set = set(range(n))
-        self.clusters=None
-        self.cluster_sijs=None
-        self.cluster_map=None
-        self.ggsijs = None
-        self.mgsijs = None
+        self.clusters = None
+        self.cluster_sijs = None
+        self.cluster_map = None
         self.content = None
         self.effective_ground = None
-        self.batch_size= batch_size
+        self.batch_size = batch_size
+        self.device = torch.device("cuda:7" if torch.cuda.is_available() else "cpu")
+        #print("inside")
+        self.data = self.data.to(self.device)
 
         if self.n <= 0:
-          raise Exception("ERROR: Number of elements in ground set must be positive")
+            raise Exception("ERROR: Number of elements in ground set must be positive")
 
         if self.mode not in ['dense', 'sparse']:
-          raise Exception("ERROR: Incorrect mode. Must be one of 'dense' or 'sparse'")
-        if self.separate_rep == True:
-          if self.n_rep is None or self.n_rep <=0:
-            raise Exception("ERROR: separate represented intended but number of elements in represented not specified or not positive")
-          if self.mode != "dense":
-            raise Exception("Only dense mode supported if separate_rep = True")
-          if (type(self.mgsijs) != type(None)) and (type(self.mgsijs) != np.ndarray):
-            raise Exception("mgsijs provided, but is not dense")
-          if (type(self.ggsijs) != type(None)) and (type(self.ggsijs) != np.ndarray):
-            raise Exception("ggsijs provided, but is not dense")
+            raise Exception("ERROR: Incorrect mode. Must be one of 'dense' or 'sparse'")
+
+        if self.separate_rep:
+            if self.n_rep is None or self.n_rep <= 0:
+                raise Exception("ERROR: separate represented intended but number of elements in represented not specified or not positive")
+            if self.mode != "dense":
+                raise Exception("Only dense mode supported if separate_rep = True")
+            if self.mgsijs is not None and not isinstance(self.mgsijs, torch.Tensor):
+                raise Exception("mgsijs provided, but is not dense")
+            if self.ggsijs is not None and not isinstance(self.ggsijs, torch.Tensor):
+                raise Exception("ggsijs provided, but is not dense")
 
         if mode == "dense":
-            self.master_ground_kernel = master_ground_kernel
-            self.ground_ground_kernel = ground_ground_kernel
-
+            #print("in dense")
             if ground_ground_kernel is not None:
                 self.separate_master = True
 
@@ -407,209 +328,66 @@ class GraphCutFunction(SetFunction):
                 self.effective_ground_set = set(range(n))
 
             self.num_effective_ground_set = len(self.effective_ground_set)
-
             self.n_master = self.num_effective_ground_set
             self.master_set = self.effective_ground_set
 
             if partial:
                 self.original_to_partial_index_map = {elem: ind for ind, elem in enumerate(self.effective_ground_set)}
 
-            self.total_similarity_with_subset = [random.random() for _ in range(self.num_effective_ground_set)]
-            self.total_similarity_with_master = [random.random() for _ in range(self.num_effective_ground_set)]
-            self.master_ground_kernel = [[random.random() for _ in range(self.num_effective_ground_set)] for _ in range(self.num_effective_ground_set)]
-            self.ground_ground_kernel = [[random.random() for _ in range(self.num_effective_ground_set)] for _ in range(self.num_effective_ground_set)]
+            self.total_similarity_with_subset = torch.ones(self.num_effective_ground_set, device=self.device)
+            self.total_similarity_with_master = torch.ones(self.num_effective_ground_set, device=self.device)
+            self.master_ground_kernel = torch.rand(self.num_effective_ground_set, self.num_effective_ground_set, device=self.device)
+            self.ground_ground_kernel = torch.rand(self.num_effective_ground_set, self.num_effective_ground_set, device=self.device)
+            
             for elem in self.effective_ground_set:
                 index = self.original_to_partial_index_map[elem] if partial else elem
-                self.total_similarity_with_subset[index] = 1
-                self.total_similarity_with_master[index] = 1
-                for j in self.master_set:
-                    self.total_similarity_with_master[index] += self.master_ground_kernel[j][elem]
+                self.total_similarity_with_master[index] = torch.sum(self.master_ground_kernel[:, elem])
 
-            if self.separate_rep == True:
-              if type(self.mgsijs) == type(None):
-                #not provided mgsij - make it
-                if (type(data) == type(None)) or (type(data_rep) == type(None)):
-                  raise Exception("Data missing to compute mgsijs")
-                if np.shape(self.data)[0]!=self.n or np.shape(self.data_rep)[0]!=self.n_rep:
-                  raise Exception("ERROR: Inconsistentcy between n, n_rep and no of examples in the given ground data matrix and represented data matrix")
+            if self.separate_rep:
+                if self.mgsijs is None:
+                    if self.data is None or self.data_rep is None:
+                        raise Exception("Data missing to compute mgsijs")
+                    if self.data.shape[0] != self.n or self.data_rep.shape[0] != self.n_rep:
+                        raise Exception("ERROR: Inconsistency between n, n_rep and number of examples in the given ground data matrix and represented data matrix")
 
-                #create_kernel_NS is there .................... find it and define it not found in helper.py but used as here
-                # self.mgsijs = np.array(subcp.create_kernel_NS(self.data.tolist(),self.data_rep.tolist(), self.metric))
-              else:
-                #provided mgsijs - verify it's dimensionality
-                if np.shape(self.mgsijs)[1]!=self.n or np.shape(self.mgsijs)[0]!=self.n_rep:
-                  raise Exception("ERROR: Inconsistency between n_rep, n and no of rows, columns of given mg kernel")
-              if type(self.ggsijs) == type(None):
-                #not provided ggsijs - make it
-                if type(data) == type(None):
-                  raise Exception("Data missing to compute ggsijs")
-                if self.num_neighbors is not None:
-                  raise Exception("num_neighbors wrongly provided for dense mode")
-                self.num_neighbors = np.shape(self.data)[0] #Using all data as num_neighbors in case of dense mode
-                #self.data = map(np.ndarray.tolist,self.data)
-                #self.data = list(self.data)
+                    self.mgsijs = create_kernel_NS(self.data, self.data_rep, self.metric).to(self.device)
+                else:
+                    if self.mgsijs.shape[1] != self.n or self.mgsijs.shape[0] != self.n_rep:
+                        raise Exception("ERROR: Inconsistency between n_rep, n and number of rows, columns of given mg kernel")
 
-                #print(self.num_neighbors)
-                #self.cpp_content = np.array(create_kernel(X = torch.tensor(self.data,device="cuda"), metric = self.metric, num_neigh = self.num_neighbors, mode = self.mode).to_dense())
+                if self.ggsijs is None:
+                    if self.data is None:
+                        raise Exception("Data missing to compute ggsijs")
+                    if self.num_neighbors is not None:
+                        raise Exception("num_neighbors wrongly provided for dense mode")
+                    self.num_neighbors = self.data.shape[0]  # Using all data as num_neighbors in case of dense mode
 
-                y = torch.tensor(self.data)
-                z = y.to(device="cuda")
-                x= create_kernel(X=z, metric=self.metric, num_neigh=self.num_neighbors, mode=self.mode, batch=self.batch_size)
-                # print("type x",type(x))
-                #self.cpp_content = np.array(create_kernel(X=torch.tensor(self.data, device="cuda").cpu(), metric=self.metric, num_neigh=self.num_neighbors, mode=self.mode).to_dense())
-                #val = self.cpp_content[0]
-                val = x[0].cpu().detach().numpy()
-                #print("val type", val.shape)
-                row = list(x[1].cpu().detach().numpy().astype(int))
-                #row = list(self.cpp_content[1].astype(int))
-                #print("row type", type(row))
-                col = list(x[2].cpu().detach().numpy().astype(int))
-                self.ggsijs = np.zeros((n,n))
-                self.ggsijs[row,col] = val
-              else:
-                #provided ggsijs - verify it's dimensionality
-                if np.shape(self.ggsijs)[0]!=self.n or np.shape(self.ggsijs)[1]!=self.n:
-                  raise Exception("ERROR: Inconsistentcy between n and dimensionality of given similarity gg kernel")
+                    self.ggsijs = create_kernel(self.data, self.metric, num_neigh=self.num_neighbors, batch_size=self.batch_size).to(self.device)
+                else:
+                    if self.ggsijs.shape[0] != self.n or self.ggsijs.shape[1] != self.n:
+                        raise Exception("ERROR: Inconsistency between n and dimensionality of given similarity gg kernel")
 
             else:
-              if (type(self.ggsijs) == type(None)) and (type(self.mgsijs) == type(None)):
-                #no kernel is provided make ggsij kernel
-                if type(data) == type(None):
-                  raise Exception("Data missing to compute ggsijs")
-                if self.num_neighbors is not None:
-                  raise Exception("num_neighbors wrongly provided for dense mode")
-                self.num_neighbors = np.shape(self.data)[0] #Using all data as num_neighbors in case of dense mode
-                #self.data = map(np.ndarray.tolist,self.data)
-                #self.data = list(self.data)
-
-                #print(self.num_neighbors)
-                #self.cpp_content = np.array(create_kernel(X = torch.tensor(self.data,device="cuda"), metric = self.metric, num_neigh = self.num_neighbors, mode = self.mode).to_dense())
-
-                #y = torch.tensor(self.data)
-                z = self.data.to(device="cuda")
-                x= create_kernel(X=z, metric=self.metric, num_neigh=self.num_neighbors, mode=self.mode, batch=self.batch_size)
-                # print("type x",type(x))
-                #self.cpp_content = np.array(create_kernel(X=torch.tensor(self.data, device="cuda").cpu(), metric=self.metric, num_neigh=self.num_neighbors, mode=self.mode).to_dense())
-                #val = self.cpp_content[0]
-                val = x[0].cpu().detach().numpy()
-                #print("val type", val.shape)
-                row = list(x[1].cpu().detach().numpy().astype(int))
-                #row = list(self.cpp_content[1].astype(int))
-                #print("row type", type(row))
-                col = list(x[2].cpu().detach().numpy().astype(int))
-                self.ggsijs = np.zeros((n,n))
-                self.ggsijs[row,col] = val
-              elif (type(self.ggsijs) == type(None)) and (type(self.mgsijs) != type(None)):
-                #gg is not available, mg is - good
-                #verify that it is dense and of correct dimension
-                if (type(self.mgsijs) != np.ndarray) or np.shape(self.mgsijs)[1]!=self.n or np.shape(self.mgsijs)[0]!=self.n:
-                  raise Exception("ERROR: Inconsistency between n and no of rows, columns of given kernel")
-                self.ggsijs = self.mgsijs
-              elif (type(self.ggsijs) != type(None)) and (type(self.mgsijs) == type(None)):
-                #gg is available, mg is not - good
-                #verify that it is dense and of correct dimension
-                if (type(self.ggsijs) != np.ndarray) or np.shape(self.ggsijs)[1]!=self.n or np.shape(self.ggsijs)[0]!=self.n:
-                  raise Exception("ERROR: Inconsistency between n and no of rows, columns of given kernel")
-              else:
-                #both are available - something is wrong
-                raise Exception("Two kernels have been wrongly provided when separate_rep=False")
-        elif mode == "sparse":
-            if self.separate_rep == True:
-                raise Exception("Separate represented is supported only in dense mode")
-            if self.num_neighbors is None or self.num_neighbors <=0:
-              raise Exception("Valid num_neighbors is needed for sparse mode")
-            if (type(self.ggsijs) == type(None)) and (type(self.mgsijs) == type(None)):
-              #no kernel is provided make ggsij sparse kernel
-              if type(data) == type(None):
-                raise Exception("Data missing to compute ggsijs")
-              self.content = np.array(create_kernel(X = torch.tensor(self.data), metric = self.metric, num_neigh = self.num_neighbors).to_dense())
-              val = self.content[0]
-              row = list(self.content[1].astype(int))
-              col = list(self.content[2].astype(int))
-              self.ggsijs = sparse.csr_matrix((val, (row, col)), [n,n])
-            elif (type(self.ggsijs) == type(None)) and (type(self.mgsijs) != type(None)):
-              #gg is not available, mg is - good
-              #verify that it is sparse
-              if type(self.mgsijs) != scipy.sparse.csr.csr_matrix:
-                raise Exception("Provided kernel is not sparse")
-              self.ggsijs = self.mgsijs
-            elif (type(self.ggsijs) != type(None)) and (type(self.mgsijs) == type(None)):
-              #gg is available, mg is not - good
-              #verify that it is dense and of correct dimension
-              if type(self.ggsijs) != scipy.sparse.csr.csr_matrix:
-                raise Exception("Provided kernel is not sparse")
-            else:
-              #both are available - something is wrong
-              raise Exception("Two kernels have been wrongly provided when separate_rep=False")
-
-        if self.separate_rep==None:
-            self.separate_rep = False
-
-        if self.mode=="dense" and self.separate_rep == False :
-            self.ggsijs = self.ggsijs.tolist() #break numpy ndarray to native list of list datastructure
-
-            if type(self.ggsijs[0])==int or type(self.ggsijs[0])==float: #Its critical that we pass a list of list to pybind11
-                                            #This condition ensures the same in case of a 1D numpy array (for 1x1 sim matrix)
-              l=[]
-              l.append(self.ggsijs)
-              self.ggsijs=l
-
-        elif self.mode=="dense" and self.separate_rep == True :
-            self.ggsijs = self.ggsijs.tolist() #break numpy ndarray to native list of list datastructure
-
-            if type(self.ggsijs[0])==int or type(self.ggsijs[0])==float: #Its critical that we pass a list of list to pybind11
-                                            #This condition ensures the same in case of a 1D numpy array (for 1x1 sim matrix)
-              l=[]
-              l.append(self.ggsijs)
-              self.ggsijs=l
-
-            self.mgsijs = self.mgsijs.tolist() #break numpy ndarray to native list of list datastructure
-
-            if type(self.mgsijs[0])==int or type(self.mgsijs[0])==float: #Its critical that we pass a list of list to pybind11
-                                            #This condition ensures the same in case of a 1D numpy array (for 1x1 sim matrix)
-              l=[]
-              l.append(self.mgsijs)
-              self.mgsijs=l
-
-            # self.cpp_obj = GraphCutpy(self.n, self.cpp_mgsijs, self.cpp_ggsijs, self.lambdaVal)
-
-        elif self.mode == "sparse":
-            self.ggsijs = {}
-            # self.ggsijs['arr_val'] = self.ggsijs.data.tolist() #contains non-zero values in matrix (row major traversal)
-            # self.ggsijs['arr_count'] = self.ggsijs.indptr.tolist() #cumulitive count of non-zero elements upto but not including current row
-            # self.ggsijs['arr_col'] = self.ggsijs.indices.tolist() #contains col index corrosponding to non-zero values in arr_val
-            # # self.cpp_obj = GraphCutpy(self.n, self.cpp_ggsijs['arr_val'], self.cpp_ggsijs['arr_count'], self.cpp_ggsijs['arr_col'], lambdaVal)
-        else:
-            raise Exception("Invalid")
+                if self.ggsijs is None and self.mgsijs is None:
+                    if self.data is None:
+                        raise Exception("Data missing to compute ggsijs")
+                    if self.num_neighbors is not None:
+                        raise Exception("num_neighbors wrongly provided for dense mode")
+                    self.num_neighbors = self.data.shape[0]  # Using all data as num_neighbors in case of dense mode
+                    #print("create kernel")
+                    self.ggsijs = create_kernel(self.data, self.metric, self.mode, self.num_neighbors, batch_size=self.batch_size).to(self.device)
+                    #print("taking time?")
+                elif self.ggsijs is None and self.mgsijs is not None:
+                    if self.mgsijs.shape[1] != self.n or self.mgsijs.shape[0] != self.n:
+                        raise Exception("ERROR: Inconsistency between n and number of rows, columns of given kernel")
+                    self.ggsijs = self.mgsijs
+                elif self.ggsijs is not None and self.mgsijs is None:
+                    if self.ggsijs.shape[1] != self.n or self.ggsijs.shape[0] != self.n:
+                        raise Exception("ERROR: Inconsistency between n and number of rows, columns of given kernel")
+                else:
+                    raise Exception("Two kernels have been wrongly provided when separate_rep=False")
 
         self.effective_ground = self.get_effective_ground_set()
-
-        # if mode == "dense":
-
-        # elif mode == "sparse":
-        #     if not arr_val or not arr_count or not arr_col:
-        #         raise ValueError("Error: Empty/Corrupt sparse similarity kernel")
-
-        #     self.sparse_kernel = SparseSim(arr_val, arr_count, arr_col)
-
-        #     self.effective_ground_set = set(range(n))
-        #     self.num_effective_ground_set = len(self.effective_ground_set)
-
-        #     self.n_master = self.num_effective_ground_set
-        #     self.master_set = self.effective_ground_set
-
-        #     self.total_similarity_with_subset = [0] * n
-        #     self.total_similarity_with_master = [0] * n
-
-        #     for i in range(n):
-        #         self.total_similarity_with_subset[i] = 0
-        #         self.total_similarity_with_master[i] = 0
-
-        #         for j in range(n):
-        #             self.total_similarity_with_master[i] += self.sparse_kernel.get_val(j, i)
-
-        # else:
-        #     raise ValueError("Invalid mode")
 
     def evaluate(self, X: Set[int]) -> float:
         effective_x = X.intersection(self.effective_ground_set) if self.partial else X
@@ -625,7 +403,7 @@ class GraphCutFunction(SetFunction):
                 result += self.total_similarity_with_master[index]
 
                 for elem2 in effective_x:
-                    result -= self.lambda_ * self.ground_ground_kernel[elem][elem2]
+                    result -= self.lambda_ * self.ground_ground_kernel[elem, elem2]
 
         elif self.mode == "sparse":
             for elem in effective_x:
@@ -652,49 +430,51 @@ class GraphCutFunction(SetFunction):
 
         return result
 
-    def marginal_gain(self, X: Set[int], item: int) -> float:
-        effective_x = X.intersection(self.effective_ground_set) if self.partial else X
+    def marginal_gain(self, X: Set[int], items: List[int]) -> torch.Tensor:
+        #print("gain")
 
-        if item in effective_x or item not in self.effective_ground_set:
-            return 0
+        effective_X = torch.tensor(list(X.intersection(self.effective_ground_set) if self.partial else X), device=self.device, dtype=torch.long)
+        item_indices = torch.tensor([self.original_to_partial_index_map[item] if self.partial else item for item in items], device=self.device)
+        
+        # Initialize gains with the total similarity with the master set
+        total_similarity = self.total_similarity_with_master[item_indices].clone()
 
-        gain = self.total_similarity_with_master[self.original_to_partial_index_map[item] if self.partial else item]
+        if effective_X.size(0) == 0:
+            return total_similarity
 
         if self.mode == "dense":
-            for elem in effective_x:
-                gain -= 2 * self.lambda_ * self.ground_ground_kernel[item][elem]
-            gain -= self.lambda_ * self.ground_ground_kernel[item][item]
+            # Matrix multiplication to sum similarities
+            effective_X_matrix = self.ground_ground_kernel[item_indices][:, effective_X]
+            sum_similarities = torch.sum(effective_X_matrix, dim=1)
+
+            # Subtract the weighted sum of similarities
+            total_similarity -= 2 * self.lambda_ * sum_similarities
+
+            # Subtract self-similarity terms
+            self_similarities = self.ground_ground_kernel[item_indices, item_indices]
+            total_similarity -= self.lambda_ * self_similarities
+
+            gains = total_similarity
+
+            #print("out")
+
 
         elif self.mode == "sparse":
-            for elem in effective_x:
-                gain -= 2 * self.lambda_ * self.sparse_kernel.get_val(item, elem)
-            gain -= self.lambda_ * self.sparse_kernel.get_val(item, item)
-        return gain
+            item_indices = torch.tensor([self.original_to_partial_index_map[item] if self.partial else item for item in items], device=device)
+            total_similarity = self.total_similarity_with_master[item_indices]
 
-    # def marginal_gain_with_memoization(self, X: Set[int], item: int, enable_checks: bool = True) -> float:
-    #     effective_x = X.intersection(self.effective_ground_set) if self.partial else X
+            if len(effective_X) > 0:
+                effective_X_matrix = self.sparse_kernel.get_val(items, effective_X)
+                sum_similarities = effective_X_matrix.sum(dim=1)
+                total_similarity -= 2 * self.lambda_ * sum_similarities
 
-    #     if enable_checks and item in effective_x:
-    #         return 0
+            self_similarities = self.sparse_kernel.get_val(items, items)
+            total_similarity -= self.lambda_ * self_similarities
+            gains = total_similarity
 
-    #     if self.partial and item not in self.effective_ground_set:
-    #         return 0
+        return gains
 
-    #     gain = 0
-
-    #     if self.mode == "dense":
-    #         index = self.original_to_partial_index_map[item] if self.partial else item
-    #         gain = self.total_similarity_with_master[index] - 2 * self.lambda_ * self.total_similarity_with_subset[index]
-    #         gain = self.total_similarity_with_master[index] - 2 * self.lambda_ * self.total_similarity_with_subset[index] - self.lambda_ * self.ground_ground_kernel[item][item]
-
-    #     elif self.mode == "sparse":
-    #         index = self.original_to_partial_index_map[item] if self.partial else item
-    #         gain = self.total_similarity_with_master[index] - 2 * self.lambda_ * self.total_similarity_with_subset[index] - self.lambda_ * self.sparse_kernel.get_val(item, item)
-
-    #     return gain
-
-
-    def marginal_gain_with_memoization(self, X: Set[int], item: int, enable_checks: bool = True) -> float:
+    def marginal_gain_with_memoization(self, X: Set[int], item: int, enable_checks: bool) -> float:
         effective_X = set()
         gain = 0
         if self.partial:
@@ -718,71 +498,54 @@ class GraphCutFunction(SetFunction):
                   - self.lambda_ * self.sparse_kernel.get_val(item, item)
         else:
             raise ValueError("Error: Only dense and sparse mode supported")
-        # print("gain value",gain)
         return gain
 
+    # def update_memoization(self, X: Set[int], item: int):
+    #     effective_x = X.intersection(self.effective_ground_set) if self.partial else X
 
-    def marginal_gain_with_memoization_vector(self, X: Set[int], R: List[int], enable_checks: bool = True) -> List[float]:
-        effective_X = set()
-        gains = []
+    #     if item in effective_x or item not in self.effective_ground_set:
+    #         return
 
-        if self.partial:
-            effective_X = X.intersection(self.effective_ground_set)
-        else:
-            effective_X = X
+    #     if self.mode == "dense":
+    #         for elem in self.effective_ground_set:
+    #             index = self.original_to_partial_index_map[elem] if self.partial else elem
+    #             self.total_similarity_with_subset[index] += self.ground_ground_kernel[elem, item]
 
-        for item in R:
-            gain = 0
-
-            if enable_checks and item in effective_X:
-                gains.append(0)
-                continue
-
-            if self.partial and item not in self.effective_ground_set:
-                gains.append(0)
-                continue
-
-            if self.mode == 'dense':
-                gain = self.total_similarity_with_master[self.original_to_partial_index_map[item] if self.partial else item] \
-                    - 2 * self.lambda_ * self.total_similarity_with_subset[self.original_to_partial_index_map[item] if self.partial else item] \
-                    - self.lambda_ * self.ground_ground_kernel[item][item]
-            elif self.mode == 'sparse':
-                gain = self.total_similarity_with_master[self.original_to_partial_index_map[item] if self.partial else item] \
-                    - 2 * self.lambda_ * self.total_similarity_with_subset[self.original_to_partial_index_map[item] if self.partial else item] \
-                    - self.lambda_ * self.sparse_kernel.get_val(item, item)
-            else:
-                raise ValueError("Error: Only dense and sparse mode supported")
-
-            gains.append(gain)
-
-        return gains
-
+    #     elif self.mode == "sparse":
+    #         for elem in self.effective_ground_set:
+    #             index = self.original_to_partial_index_map[elem] if self.partial else elem
+    #             self.total_similarity_with_subset[index] += self.sparse_kernel.get_val(elem, item)
 
     def update_memoization(self, X: Set[int], item: int):
-        effective_x = X.intersection(self.effective_ground_set) if self.partial else X
+        if self.partial:
+            effective_x = X.intersection(self.effective_ground_set)
+        else:
+            effective_x = X
 
         if item in effective_x or item not in self.effective_ground_set:
             return
 
         if self.mode == "dense":
-            for elem in self.effective_ground_set:
-                index = self.original_to_partial_index_map[elem] if self.partial else elem
-                # self.total_similarity_with_subset[index] += self.ground_ground_kernel[elem][item]
+            # Convert effective_ground_set to tensor
+            effective_ground_set_tensor = torch.tensor(
+                list(self.effective_ground_set), device=self.device, dtype=torch.long
+            )
+            indices = torch.tensor(
+                [self.original_to_partial_index_map[elem] if self.partial else elem for elem in self.effective_ground_set],
+                device=self.device
+            )
+            
+            self.total_similarity_with_subset[indices] += self.ground_ground_kernel[effective_ground_set_tensor, item]
 
         elif self.mode == "sparse":
             for elem in self.effective_ground_set:
                 index = self.original_to_partial_index_map[elem] if self.partial else elem
                 self.total_similarity_with_subset[index] += self.sparse_kernel.get_val(elem, item)
 
+
     def get_effective_ground_set(self) -> Set[int]:
         return self.effective_ground_set
 
     def clear_memoization(self):
         if self.mode == "dense" or self.mode == "sparse":
-            self.total_similarity_with_subset = [0] * self.num_effective_ground_set
-
-    def set_memoization(self, X: Set[int]):
-        temp = set()
-        for elem in X:
-            self.update_memoization(temp, elem)
-            temp.add(elem)
+            self.total_similarity_with_subset = torch.zeros(self.num_effective_ground_set, device=self.device)
